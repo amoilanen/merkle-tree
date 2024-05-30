@@ -1,5 +1,3 @@
-use std::thread::current;
-
 use sha2::{Sha256, Digest};
 
 #[derive(PartialEq, Debug, Clone)]
@@ -17,17 +15,26 @@ pub struct MerkleTree {
     hashes: Vec<Vec<Hash>>
 }
 
+#[derive(PartialEq, Debug)]
 enum MerkleTreeDirection {
     Left,
     Right
 }
 
+#[derive(PartialEq, Debug)]
+pub struct MerkleTreeProofLink {
+    hash: Hash,
+    direction: Option<MerkleTreeDirection>
+}
+
+#[derive(PartialEq, Debug)]
 pub struct MerkleTreeProof {
-    parts: Vec<(Hash, MerkleTreeDirection)>
+    links: Vec<MerkleTreeProofLink>
 }
 
 impl MerkleTreeProof {
-    fn compute_root(&self) -> Hash {
+    fn compute_root<F>(&self, h: F) -> Hash
+    where F: Fn(&str) -> Hash {
         //TODO: Implement
         Hash {
             value: String::from("")
@@ -37,7 +44,7 @@ impl MerkleTreeProof {
 
 impl MerkleTree {
 
-    fn build<F>(h: F, values: &Vec<&str>) ->  MerkleTree
+    fn build<F>(values: &Vec<&str>, h: F) ->  MerkleTree
     where F: Fn(&str) -> Hash {
         let hashes: Vec<Hash> = values.iter().map(|x| h(x)).collect();
         let mut tree: Vec<Vec<Hash>> = Vec::new();
@@ -69,9 +76,49 @@ impl MerkleTree {
     }
 
     fn generate_proof(&self, hash: Hash) -> Option<MerkleTreeProof> {
-        //TODO: Implement
+        let mut proof_links = vec![
+            MerkleTreeProofLink {
+                hash: hash.clone(),
+                direction: None
+            }
+        ];
+        let mut tree_level: usize = self.hashes.len();
+        let mut level_hashes = self.hashes.get(tree_level - 1);
+        if level_hashes.is_none() {
+            return None;
+        }
+        let mut last_hash_position = level_hashes.unwrap().iter().position(|x| x.value == hash.value);
+        if last_hash_position.is_none() {
+            return None;
+        }
+        while tree_level > 1 {
+            level_hashes = self.hashes.get(tree_level - 1);
+            if level_hashes.is_none() {
+                return None;
+            }
+            if let Some(hash_position) = last_hash_position {
+                let direction_to_sibling = if hash_position % 2 == 0 {
+                    MerkleTreeDirection::Right
+                } else {
+                    MerkleTreeDirection::Left
+                };
+                let sibling_position = if direction_to_sibling == MerkleTreeDirection::Right {
+                    hash_position + 1
+                } else {
+                    hash_position - 1
+                };
+                let sibling_hash = level_hashes.unwrap().get(sibling_position).unwrap();
+                let sibling_proof_link = MerkleTreeProofLink {
+                    hash: sibling_hash.clone(),
+                    direction: Some(direction_to_sibling)
+                };
+                proof_links.push(sibling_proof_link);
+                last_hash_position = Some(hash_position / 2);
+            }
+            tree_level -= 1;
+        }
         Some(MerkleTreeProof {
-            parts: Vec::new()
+            links: proof_links
         })
     }
 }
@@ -95,7 +142,7 @@ mod tests {
     fn build_merkle_tree_zero_hashes() {
         let values: Vec<&str> = Vec::new();
 
-        let tree = MerkleTree::build(|e| Hash { value: String::from(e) }, &values);
+        let tree = MerkleTree::build(&values, |e| Hash { value: String::from(e) });
         assert_eq!(tree.hashes, vec![
             Vec::new()
         ]);
@@ -105,7 +152,7 @@ mod tests {
     fn build_merkle_tree_one_hash() {
         let values = vec!["a"];
 
-        let tree = MerkleTree::build(|e| Hash { value: String::from(e) }, &values);
+        let tree = MerkleTree::build(&values, |e| Hash { value: String::from(e) });
         assert_eq!(tree.hashes, vec![
             vec![Hash::new("a")],
         ]);
@@ -115,7 +162,7 @@ mod tests {
     fn build_merkle_tree_two_hashes() {
         let values = vec!["a", "b"];
 
-        let tree = MerkleTree::build(|e| Hash { value: String::from(e) }, &values);
+        let tree = MerkleTree::build(&values, |e| Hash { value: String::from(e) });
         assert_eq!(tree.hashes, vec![
             vec![Hash::new("ab")],
             vec![Hash::new("a"), Hash::new("b")],
@@ -126,7 +173,7 @@ mod tests {
     fn build_merkle_tree_more_hashes() {
         let values = vec!["a", "b", "c", "d", "e", "f", "g", "h"];
 
-        let tree = MerkleTree::build(|e| Hash { value: String::from(e) }, &values);
+        let tree = MerkleTree::build(&values, |e| Hash { value: String::from(e) });
         assert_eq!(tree.hashes, vec![
             vec![Hash::new("abcdefgh")],
             vec![Hash::new("abcd"), Hash::new("efgh")],
@@ -139,13 +186,58 @@ mod tests {
     fn build_merkle_tree_more_hashes_not_a_degree_of_two() {
         let values = vec!["a", "b", "c", "d", "e"];
 
-        let tree = MerkleTree::build(|e| Hash { value: String::from(e) }, &values);
+        let tree = MerkleTree::build(&values, |e| Hash { value: String::from(e) });
         assert_eq!(tree.hashes, vec![
             vec![Hash::new("abcdeeee")],
             vec![Hash::new("abcd"), Hash::new("eeee")],
             vec![Hash::new("ab"), Hash::new("cd"), Hash::new("ee"), Hash::new("ee")],
             vec![Hash::new("a"), Hash::new("b"), Hash::new("c"), Hash::new("d"), Hash::new("e"), Hash::new("e")],
         ]);
+    }
+
+    #[test]
+    fn generate_proof_for_hash_present_in_tree() {
+        let tree = MerkleTree {
+            hashes: vec![
+                vec![Hash::new("abcdefgh")],
+                vec![Hash::new("abcd"), Hash::new("efgh")],
+                vec![Hash::new("ab"), Hash::new("cd"), Hash::new("ef"), Hash::new("gh")],
+                vec![Hash::new("a"), Hash::new("b"), Hash::new("c"), Hash::new("d"), Hash::new("e"), Hash::new("f"), Hash::new("g"), Hash::new("h")],
+            ]
+        };
+        assert_eq!(tree.generate_proof(Hash::new("c")), 
+            Some(MerkleTreeProof {
+                links: vec![
+                    MerkleTreeProofLink {
+                        hash: Hash::new("c"),
+                        direction: None
+                    },
+                    MerkleTreeProofLink {
+                        hash: Hash::new("d"),
+                        direction: Some(MerkleTreeDirection::Right)
+                    },
+                    MerkleTreeProofLink {
+                        hash: Hash::new("ab"),
+                        direction: Some(MerkleTreeDirection::Left)
+                    },
+                    MerkleTreeProofLink {
+                        hash: Hash::new("efgh"),
+                        direction: Some(MerkleTreeDirection::Right)
+                    },
+                ]
+            })
+        )
+    }
+
+    #[test]
+    fn generate_proof_for_hash_absent_from_tree() {
+        let tree = MerkleTree {
+            hashes: vec![
+                vec![Hash::new("ab")],
+                vec![Hash::new("a"), Hash::new("b")],
+            ]
+        };
+        assert_eq!(tree.generate_proof(Hash::new("c")), None)
     }
 }
 
