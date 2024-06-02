@@ -139,9 +139,13 @@ fn sha256_hash(value: &str) -> Hash {
     Hash { value: String::from(std::str::from_utf8(hasher.finalize().as_slice()).unwrap()) } //TODO: Avoid using "unwrap"
 }
 
-pub fn verify_belongs_to_tree(merkle_tree_root: &Hash, merkle_tree_proof: &MerkleTreeProof) -> bool {
-    //TODO: Implement
-    false
+pub fn verify_belongs_to_tree<F>(merkle_tree_root: &Hash, merkle_tree_proof: &MerkleTreeProof, h: F) -> bool
+where F: Fn(&str) -> Hash {
+    match merkle_tree_proof.compute_root(h) {
+        Some(computed_root) =>
+            computed_root.value == merkle_tree_root.value,
+        None => false
+    }
 }
 
 #[cfg(test)]
@@ -290,6 +294,40 @@ mod tests {
             ]
         };
         assert_eq!(proof.compute_root(|e| Hash { value: String::from(e) }), Some(Hash::new("ab")))
+    }
+
+    #[test]
+    fn verify_belongs_to_tree_node() {
+        let proof_for_node_belonging_to_tree = MerkleTreeProof {
+            links: vec![
+                MerkleTreeProofLink {
+                    hash: Hash::new("a"),
+                    direction: None
+                },
+                MerkleTreeProofLink {
+                    hash: Hash::new("b"),
+                    direction: Some(MerkleTreeDirection::Right)
+                }
+            ]
+        };
+        let proof_for_node_not_belonging_to_tree = MerkleTreeProof {
+            links: vec![
+                MerkleTreeProofLink {
+                    hash: Hash::new("b"),
+                    direction: None
+                },
+                MerkleTreeProofLink {
+                    hash: Hash::new("c"),
+                    direction: Some(MerkleTreeDirection::Left)
+                }
+            ]
+        };
+        let root = Hash::new("ab");
+        fn h(x: &str) -> Hash {
+            Hash { value: String::from(x) }
+        }
+        assert!(verify_belongs_to_tree(&root, &proof_for_node_belonging_to_tree, h));
+        assert!(!verify_belongs_to_tree(&root, &proof_for_node_not_belonging_to_tree, h));
     }
 }
 
