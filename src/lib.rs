@@ -1,5 +1,3 @@
-use std::thread::current;
-
 use sha2::{Sha256, Digest};
 
 #[derive(PartialEq, Debug, Clone)]
@@ -133,10 +131,11 @@ impl MerkleTree {
     }
 }
 
-fn sha256_hash(value: &str) -> Hash {
+pub fn sha256_hash(value: &str) -> Hash {
     let mut hasher = Sha256::new();
     hasher.update(value.as_bytes());
-    Hash { value: String::from(std::str::from_utf8(hasher.finalize().as_slice()).unwrap()) } //TODO: Avoid using "unwrap"
+    let hashed = hasher.finalize();
+    Hash { value: format!("{:x}", hashed) }
 }
 
 pub fn verify_belongs_to_tree<F>(merkle_tree_root: &Hash, merkle_tree_proof: &MerkleTreeProof, h: F) -> bool
@@ -329,25 +328,4 @@ mod tests {
         assert!(verify_belongs_to_tree(&root, &proof_for_node_belonging_to_tree, h));
         assert!(!verify_belongs_to_tree(&root, &proof_for_node_not_belonging_to_tree, h));
     }
-}
-
-fn main() {
-
-    struct Transaction {
-        from: String,
-        to: String,
-        input: Vec<u8>
-    }
-    
-    struct Block {
-        transactions: Vec<Transaction>
-    }
-
-    //TODO: Provide an Ethereum-like example where "light node" will call verify_belongs_to_tree and "full node" will call build
-    //and will store the full tree, and will provide get_root to be called by a "light node" and generate_proof to be called by the user who will later verify
-    //the proof on the "light node"
-
-    let elements = vec!["a", "b", "c", "d", "e"];
-    let hashes: Vec<Hash> = elements.iter().map(|element| sha256_hash(element)).collect();
-    println!("Hello, world!");
 }
