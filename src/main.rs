@@ -1,3 +1,5 @@
+use std::thread::current;
+
 use sha2::{Sha256, Digest};
 
 #[derive(PartialEq, Debug, Clone)]
@@ -33,12 +35,20 @@ pub struct MerkleTreeProof {
 }
 
 impl MerkleTreeProof {
-    fn compute_root<F>(&self, h: F) -> Hash
+    fn compute_root<F>(&self, h: F) -> Option<Hash>
     where F: Fn(&str) -> Hash {
-        //TODO: Implement
-        Hash {
-            value: String::from("")
+        let mut current_node: Option<Hash> = None;
+        for current_link in self.links.iter() {
+            current_node = match current_node {
+                Some(node_hash) => match current_link.direction {
+                    Some(MerkleTreeDirection::Right) => Some(h(&(node_hash.value + &current_link.hash.value))),
+                    Some(MerkleTreeDirection::Left) => Some(h(&(current_link.hash.value.clone() + &node_hash.value))),
+                    None => None
+                },
+                None => Some(current_link.hash.clone())
+            }
         }
+        current_node
     }
 }
 
@@ -238,6 +248,48 @@ mod tests {
             ]
         };
         assert_eq!(tree.generate_proof(Hash::new("c")), None)
+    }
+
+    #[test]
+    fn compute_root_from_proof_4_level_tree() {
+        let proof = MerkleTreeProof {
+            links: vec![
+                MerkleTreeProofLink {
+                    hash: Hash::new("c"),
+                    direction: None
+                },
+                MerkleTreeProofLink {
+                    hash: Hash::new("d"),
+                    direction: Some(MerkleTreeDirection::Right)
+                },
+                MerkleTreeProofLink {
+                    hash: Hash::new("ab"),
+                    direction: Some(MerkleTreeDirection::Left)
+                },
+                MerkleTreeProofLink {
+                    hash: Hash::new("efgh"),
+                    direction: Some(MerkleTreeDirection::Right)
+                },
+            ]
+        };
+        assert_eq!(proof.compute_root(|e| Hash { value: String::from(e) }), Some(Hash::new("abcdefgh")))
+    }
+
+    #[test]
+    fn compute_root_from_proof_2_level_tree() {
+        let proof = MerkleTreeProof {
+            links: vec![
+                MerkleTreeProofLink {
+                    hash: Hash::new("a"),
+                    direction: None
+                },
+                MerkleTreeProofLink {
+                    hash: Hash::new("b"),
+                    direction: Some(MerkleTreeDirection::Right)
+                }
+            ]
+        };
+        assert_eq!(proof.compute_root(|e| Hash { value: String::from(e) }), Some(Hash::new("ab")))
     }
 }
 
