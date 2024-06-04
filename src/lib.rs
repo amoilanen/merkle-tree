@@ -11,6 +11,7 @@ impl Hash {
     }
 }
 
+#[derive(Debug)]
 pub struct MerkleTree {
     hashes: Vec<Vec<Hash>>
 }
@@ -29,11 +30,11 @@ pub struct MerkleTreeProofLink {
 
 #[derive(PartialEq, Debug)]
 pub struct MerkleTreeProof {
-    links: Vec<MerkleTreeProofLink>
+    pub links: Vec<MerkleTreeProofLink>
 }
 
 impl MerkleTreeProof {
-    fn compute_root<F>(&self, h: F) -> Option<Hash>
+    pub fn compute_root<F>(&self, h: F) -> Option<Hash>
     where F: Fn(&str) -> Hash {
         let mut current_node: Option<Hash> = None;
         for current_link in self.links.iter() {
@@ -52,7 +53,7 @@ impl MerkleTreeProof {
 
 impl MerkleTree {
 
-    fn build<F>(values: &Vec<&str>, h: F) ->  MerkleTree
+    pub fn build<F>(values: &Vec<&str>, h: F) ->  MerkleTree
     where F: Fn(&str) -> Hash {
         let hashes: Vec<Hash> = values.iter().map(|x| h(x)).collect();
         let mut tree: Vec<Vec<Hash>> = Vec::new();
@@ -78,12 +79,12 @@ impl MerkleTree {
         }
     }
 
-    fn get_root(&self) -> &Hash {
+    pub fn get_root(&self) -> &Hash {
         //TODO: Avoid unwrap
         self.hashes.get(0).map(|x| x.get(0).unwrap()).unwrap()
     }
 
-    fn generate_proof(&self, hash: Hash) -> Option<MerkleTreeProof> {
+    pub fn generate_proof(&self, hash: Hash) -> Option<MerkleTreeProof> {
         let mut proof_links = vec![
             MerkleTreeProofLink {
                 hash: hash.clone(),
