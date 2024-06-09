@@ -159,13 +159,13 @@ fn main() {
 
     light_nodes.iter().for_each(|light_node| {
         let verification_result = light_node.verify(&client_transaction_proof, &block_id);
-        println!("Verified transaction status on a light node {:?}\n", verification_result);
+        println!("Verified transaction status on a light node {:?}", verification_result);
     });
 
     /*
      * Client trying to tamper with the proof: verification will fail
      */
-    let other_block_tree = FullNode::build_tree_from(&block);
+    let other_block_tree = FullNode::build_tree_from(&other_block);
     let other_transaction_hash = merkle_tree::sha256_hash(format!("{:?}", other_block.transactions.get(0).unwrap()).as_str());
     let tampered_client_transaction_proof = other_block_tree.generate_proof(other_transaction_hash).unwrap();
     println!("tampered client_transaction_proof = {:?}\n", tampered_client_transaction_proof);
