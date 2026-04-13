@@ -63,7 +63,7 @@ impl FullNode {
     /// Generate a Merkle proof for `transaction_index` within `block_id`.
     fn proof_for(&self, block_id: &str, transaction_index: usize) -> Option<Proof> {
         let block = self.blocks.iter().find(|b| b.id == block_id)?;
-        let leaf = block.tree.leaf_hash(transaction_index)?;
+        let leaf = block.tree.get_leaf_hash(transaction_index)?;
         block.tree.generate_proof(leaf)
     }
 }
@@ -82,7 +82,7 @@ impl LightNode {
         let headers = full
             .blocks
             .iter()
-            .map(|b| (b.id, *b.tree.root().expect("non-empty block")))
+            .map(|b| (b.id, *b.tree.get_root_hash().expect("non-empty block")))
             .collect();
         Self { headers }
     }

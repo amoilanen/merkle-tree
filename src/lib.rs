@@ -24,9 +24,9 @@
 //! use merkle_tree::MerkleTree;
 //!
 //! let tree = MerkleTree::build(&["alice→bob: 50", "bob→carol: 30"]);
-//! let root = tree.root().expect("non-empty tree has a root");
+//! let root = tree.get_root_hash().expect("non-empty tree has a root");
 //!
-//! let leaf = tree.leaf_hash(0).expect("leaf exists");
+//! let leaf = tree.get_leaf_hash(0).expect("leaf exists");
 //! let proof = tree.generate_proof(leaf).expect("proof exists");
 //! assert!(proof.verify(root));
 //! ```
@@ -185,10 +185,10 @@ impl MerkleTree {
     /// use merkle_tree::MerkleTree;
     ///
     /// let tree = MerkleTree::build(&["tx1", "tx2", "tx3"]);
-    /// assert!(tree.root().is_some());
+    /// assert!(tree.get_root_hash().is_some());
     ///
     /// let empty = MerkleTree::build::<&[u8]>(&[]);
-    /// assert!(empty.root().is_none());
+    /// assert!(empty.get_root_hash().is_none());
     /// ```
     pub fn build<T: AsRef<[u8]>>(leaves: &[T]) -> MerkleTree {
         if leaves.is_empty() {
@@ -208,8 +208,9 @@ impl MerkleTree {
             // Bitcoin's Merkle tree construction which duplicates the trailing
             // hash so every node has a pair.
             if current_level.len() % 2 != 0 {
-                let last = *current_level.last().unwrap();
-                current_level.push(last);
+                if let Some(&last) = current_level.last() {
+                    current_level.push(last);
+                }
             }
             levels.push(current_level.clone());
 
@@ -240,7 +241,7 @@ impl MerkleTree {
     ///
     /// This is the hash stored internally at the leaf level, suitable for
     /// passing to [`generate_proof`](Self::generate_proof).
-    pub fn leaf_hash(&self, index: usize) -> Option<&Hash> {
+    pub fn get_leaf_hash(&self, index: usize) -> Option<&Hash> {
         if index >= self.leaf_count {
             return None;
         }
@@ -255,10 +256,10 @@ impl MerkleTree {
     /// use merkle_tree::MerkleTree;
     ///
     /// let tree = MerkleTree::build(&["a", "b"]);
-    /// let root = tree.root().expect("non-empty tree");
+    /// let root = tree.get_root_hash().expect("non-empty tree");
     /// assert_eq!(root.to_string().len(), 64);
     /// ```
-    pub fn root(&self) -> Option<&Hash> {
+    pub fn get_root_hash(&self) -> Option<&Hash> {
         self.levels.first().and_then(|level| level.first())
     }
 
@@ -273,11 +274,11 @@ impl MerkleTree {
     /// use merkle_tree::MerkleTree;
     ///
     /// let tree = MerkleTree::build(&["tx1", "tx2", "tx3"]);
-    /// let root = tree.root().unwrap();
+    /// let root = tree.get_root_hash().unwrap();
     ///
     /// // The tree hashes leaves internally with domain separation.
     /// // Use `leaf_hash` to obtain the correct hash for proof lookup.
-    /// let leaf = tree.leaf_hash(0).unwrap();
+    /// let leaf = tree.get_leaf_hash(0).unwrap();
     /// let proof = tree.generate_proof(&leaf).expect("leaf is in the tree");
     /// assert!(proof.verify(root));
     /// ```
@@ -293,6 +294,8 @@ impl MerkleTree {
         // then halve the position to move to the parent level.
         for depth in (1..self.levels.len()).rev() {
             let level = &self.levels[depth];
+            // Nodes are paired (0-1, 2-3, …): even positions pair with the next
+            // node (right sibling), odd positions pair with the previous one (left sibling).
             let sibling_pos = if position % 2 == 0 {
                 position + 1
             } else {
@@ -333,8 +336,8 @@ impl Proof {
     /// use merkle_tree::MerkleTree;
     ///
     /// let tree = MerkleTree::build(&["a", "b", "c", "d"]);
-    /// let root = tree.root().unwrap();
-    /// let proof = tree.generate_proof(tree.leaf_hash(0).unwrap()).unwrap();
+    /// let root = tree.get_root_hash().unwrap();
+    /// let proof = tree.generate_proof(tree.get_leaf_hash(0).unwrap()).unwrap();
     /// assert_eq!(proof.compute_root(), *root);
     /// ```
     pub fn compute_root(&self) -> Hash {
@@ -358,13 +361,13 @@ impl Proof {
     /// use merkle_tree::MerkleTree;
     ///
     /// let tree = MerkleTree::build(&["tx1", "tx2", "tx3", "tx4"]);
-    /// let root = tree.root().unwrap();
-    /// let proof = tree.generate_proof(tree.leaf_hash(2).unwrap()).unwrap();
+    /// let root = tree.get_root_hash().unwrap();
+    /// let proof = tree.generate_proof(tree.get_leaf_hash(2).unwrap()).unwrap();
     /// assert!(proof.verify(root));
     ///
     /// // A different tree's root will not match:
     /// let other = MerkleTree::build(&["x", "y"]);
-    /// assert!(!proof.verify(other.root().unwrap()));
+    /// assert!(!proof.verify(other.get_root_hash().unwrap()));
     /// ```
     pub fn verify(&self, expected_root: &Hash) -> bool {
         self.compute_root() == *expected_root
@@ -399,14 +402,14 @@ mod tests {
     #[test]
     fn empty_tree_has_no_root() {
         let tree = MerkleTree::build::<&[u8]>(&[]);
-        assert!(tree.root().is_none());
+        assert!(tree.get_root_hash().is_none());
     }
 
     #[test]
     fn single_leaf_tree() {
         let tree = MerkleTree::build(&["a"]);
         assert_eq!(tree.levels.len(), 1);
-        assert_eq!(*tree.root().unwrap(), h(LEAF_A));
+        assert_eq!(*tree.get_root_hash().unwrap(), h(LEAF_A));
     }
 
     #[test]
@@ -415,7 +418,7 @@ mod tests {
         assert_eq!(tree.levels.len(), 2); // root + leaves
         assert_eq!(tree.levels[0].len(), 1);
         assert_eq!(tree.levels[1].len(), 2);
-        assert_eq!(*tree.root().unwrap(), h(ROOT_AB));
+        assert_eq!(*tree.get_root_hash().unwrap(), h(ROOT_AB));
     }
 
     #[test]
@@ -424,7 +427,7 @@ mod tests {
         assert_eq!(tree.levels.len(), 3); // root, 2 internal, 4 leaves
         assert_eq!(tree.levels[0].len(), 1);
         assert_eq!(tree.levels[2].len(), 4);
-        assert_eq!(*tree.root().unwrap(), h(ROOT_ABCD));
+        assert_eq!(*tree.get_root_hash().unwrap(), h(ROOT_ABCD));
     }
 
     #[test]
@@ -443,7 +446,7 @@ mod tests {
         // Leaf level has 4 entries (3 + 1 duplicate)
         assert_eq!(tree.levels[2].len(), 4);
         assert_eq!(tree.levels[2][2], tree.levels[2][3], "last leaf must be duplicated");
-        assert_eq!(*tree.root().unwrap(), h(ROOT_ABC));
+        assert_eq!(*tree.get_root_hash().unwrap(), h(ROOT_ABC));
     }
 
     #[test]
@@ -459,7 +462,7 @@ mod tests {
     fn deterministic_builds() {
         let t1 = MerkleTree::build(&["x", "y", "z"]);
         let t2 = MerkleTree::build(&["x", "y", "z"]);
-        assert_eq!(t1.root(), t2.root());
+        assert_eq!(t1.get_root_hash(), t2.get_root_hash());
     }
 
     // ── Proof generation ────────────────────────────────────────────────
@@ -494,7 +497,7 @@ mod tests {
     fn proof_roundtrip_all_leaves() {
         let items = &["a", "b", "c", "d"];
         let tree = MerkleTree::build(items);
-        let root = tree.root().unwrap();
+        let root = tree.get_root_hash().unwrap();
 
         for item in items {
             let leaf = hash_leaf(item.as_bytes());
@@ -507,7 +510,7 @@ mod tests {
     #[test]
     fn proof_compute_root_matches_tree_root() {
         let tree = MerkleTree::build(&["a", "b", "c", "d"]);
-        let root = tree.root().unwrap();
+        let root = tree.get_root_hash().unwrap();
         let leaf = hash_leaf(b"a");
         let proof = tree.generate_proof(&leaf).unwrap();
         assert_eq!(proof.compute_root(), *root);
@@ -516,7 +519,7 @@ mod tests {
     #[test]
     fn tampered_step_fails_verification() {
         let tree = MerkleTree::build(&["a", "b", "c", "d"]);
-        let root = tree.root().unwrap();
+        let root = tree.get_root_hash().unwrap();
         let leaf = hash_leaf(b"a");
         let mut proof = tree.generate_proof(&leaf).unwrap();
         proof.steps[0].hash = hash(b"tampered");
@@ -526,7 +529,7 @@ mod tests {
     #[test]
     fn tampered_leaf_fails_verification() {
         let tree = MerkleTree::build(&["a", "b", "c", "d"]);
-        let root = tree.root().unwrap();
+        let root = tree.get_root_hash().unwrap();
         let leaf = hash_leaf(b"a");
         let mut proof = tree.generate_proof(&leaf).unwrap();
         proof.leaf = hash_leaf(b"TAMPERED");
@@ -539,13 +542,13 @@ mod tests {
         let tree2 = MerkleTree::build(&["x", "y"]);
         let leaf = hash_leaf(b"a");
         let proof = tree1.generate_proof(&leaf).unwrap();
-        assert!(!proof.verify(tree2.root().unwrap()));
+        assert!(!proof.verify(tree2.get_root_hash().unwrap()));
     }
 
     #[test]
     fn flipped_direction_fails_verification() {
         let tree = MerkleTree::build(&["a", "b", "c", "d"]);
-        let root = tree.root().unwrap();
+        let root = tree.get_root_hash().unwrap();
         let leaf = hash_leaf(b"a");
         let mut proof = tree.generate_proof(&leaf).unwrap();
         // Flip the direction of the first step
@@ -561,7 +564,7 @@ mod tests {
     #[test]
     fn single_leaf_proof_and_verify() {
         let tree = MerkleTree::build(&["only"]);
-        let root = tree.root().unwrap();
+        let root = tree.get_root_hash().unwrap();
         let leaf = hash_leaf(b"only");
         let proof = tree.generate_proof(&leaf).unwrap();
         assert!(proof.steps.is_empty(), "single-leaf proof needs no steps");
@@ -576,7 +579,7 @@ mod tests {
         // In a 3-leaf tree [a, b, c], "c" is duplicated to make [a, b, c, c].
         // Proof for "c" should still verify correctly.
         let tree = MerkleTree::build(&["a", "b", "c"]);
-        let root = tree.root().unwrap();
+        let root = tree.get_root_hash().unwrap();
         let leaf_c = hash_leaf(b"c");
         let proof = tree.generate_proof(&leaf_c).unwrap();
         assert!(proof.verify(root));
@@ -590,7 +593,7 @@ mod tests {
         let leaves: Vec<String> = (0..n).map(|i| format!("leaf_{i}")).collect();
         let refs: Vec<&str> = leaves.iter().map(|s| s.as_str()).collect();
         let tree = MerkleTree::build(&refs);
-        let root = tree.root().unwrap();
+        let root = tree.get_root_hash().unwrap();
 
         let target = hash_leaf(b"leaf_500");
         let proof = tree.generate_proof(&target).unwrap();
@@ -607,7 +610,7 @@ mod tests {
         let leaves: Vec<String> = (0..n).map(|i| format!("item_{i}")).collect();
         let refs: Vec<&str> = leaves.iter().map(|s| s.as_str()).collect();
         let tree = MerkleTree::build(&refs);
-        let root = tree.root().unwrap();
+        let root = tree.get_root_hash().unwrap();
 
         for leaf_data in &leaves {
             let leaf_hash = hash_leaf(leaf_data.as_bytes());
