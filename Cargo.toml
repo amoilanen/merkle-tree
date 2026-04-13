@@ -2,6 +2,13 @@
 name = "merkle-tree"
 version = "0.1.0"
 edition = "2021"
+description = "A SHA-256 Merkle tree implementation for blockchain and data integrity verification"
+license = "MIT"
+keywords = ["merkle", "tree", "sha256", "blockchain", "verification"]
+categories = ["cryptography", "data-structures"]
 
 [dependencies]
 sha2 = "0.10.8"
+
+[dev-dependencies]
+hex = "0.4"
