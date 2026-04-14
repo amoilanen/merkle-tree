@@ -34,8 +34,6 @@
 use sha2::{Digest, Sha256};
 use std::fmt;
 
-// ── Types ───────────────────────────────────────────────────────────────
-
 /// A SHA-256 digest (32 bytes).
 ///
 /// This is the fundamental unit of data throughout the tree. It wraps a
@@ -124,8 +122,6 @@ pub struct MerkleTree {
     leaf_count: usize,
 }
 
-// ── Hashing ─────────────────────────────────────────────────────────────
-
 /// Hash arbitrary data with SHA-256.
 ///
 /// Use this to produce leaf hashes before inserting them into a tree or
@@ -166,8 +162,6 @@ fn hash_pair(left: &Hash, right: &Hash) -> Hash {
     hasher.update(right.0);
     Hash(hasher.finalize().into())
 }
-
-// ── MerkleTree ──────────────────────────────────────────────────────────
 
 impl MerkleTree {
     /// Build a Merkle tree from leaf data.
@@ -321,8 +315,6 @@ impl MerkleTree {
     }
 }
 
-// ── Proof ───────────────────────────────────────────────────────────────
-
 impl Proof {
     /// Recompute the root hash from this proof's leaf and steps.
     ///
@@ -374,19 +366,19 @@ impl Proof {
     }
 }
 
-// ── Tests ───────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Context;
 
     /// Helper: decode a hex string into a `Hash`.
-    fn h(hex_str: &str) -> Hash {
-        let bytes: [u8; 32] = hex::decode(hex_str)
-            .expect("valid hex")
+    fn h(hex_str: &str) -> anyhow::Result<Hash> {
+        let bytes: Vec<u8> = hex::decode(hex_str)?;
+        let len = bytes.len();
+        let bytes: [u8; 32] = bytes
             .try_into()
-            .expect("32 bytes");
-        Hash::from(bytes)
+            .map_err(|_| anyhow::anyhow!("expected 32 bytes, got {len}"))?;
+        Ok(Hash::from(bytes))
     }
 
     // Precomputed hashes (domain-separated: leaf = SHA-256(0x00 || data),
@@ -397,8 +389,6 @@ mod tests {
     const ROOT_ABCD: &str = "33376a3bd63e9993708a84ddfe6c28ae58b83505dd1fed711bd924ec5a6239f0";
     const ROOT_ABC: &str = "e9636069c740c9ff51625b01a0b040396d265a9b920cc6febdfa5ecc9f58ecce";
 
-    // ── Tree construction ───────────────────────────────────────────────
-
     #[test]
     fn empty_tree_has_no_root() {
         let tree = MerkleTree::build::<&[u8]>(&[]);
@@ -406,51 +396,57 @@ mod tests {
     }
 
     #[test]
-    fn single_leaf_tree() {
+    fn single_leaf_tree_root_equals_leaf_hash() -> anyhow::Result<()> {
         let tree = MerkleTree::build(&["a"]);
         assert_eq!(tree.levels.len(), 1);
-        assert_eq!(*tree.get_root_hash().unwrap(), h(LEAF_A));
+        assert_eq!(*tree.get_root_hash().context("missing root")?, h(LEAF_A)?);
+        Ok(())
     }
 
     #[test]
-    fn two_leaf_tree() {
+    fn two_leaf_tree_has_root_and_leaf_levels() -> anyhow::Result<()> {
         let tree = MerkleTree::build(&["a", "b"]);
         assert_eq!(tree.levels.len(), 2); // root + leaves
         assert_eq!(tree.levels[0].len(), 1);
         assert_eq!(tree.levels[1].len(), 2);
-        assert_eq!(*tree.get_root_hash().unwrap(), h(ROOT_AB));
+        assert_eq!(*tree.get_root_hash().context("missing root")?, h(ROOT_AB)?);
+        Ok(())
     }
 
     #[test]
-    fn four_leaf_tree() {
+    fn four_leaf_tree_has_three_levels_and_known_root() -> anyhow::Result<()> {
         let tree = MerkleTree::build(&["a", "b", "c", "d"]);
         assert_eq!(tree.levels.len(), 3); // root, 2 internal, 4 leaves
         assert_eq!(tree.levels[0].len(), 1);
         assert_eq!(tree.levels[2].len(), 4);
-        assert_eq!(*tree.get_root_hash().unwrap(), h(ROOT_ABCD));
+        assert_eq!(*tree.get_root_hash().context("missing root")?, h(ROOT_ABCD)?);
+        Ok(())
     }
 
     #[test]
-    fn power_of_two_leaves() {
+    fn power_of_two_leaves_produce_balanced_levels() {
         let tree = MerkleTree::build(&["a", "b", "c", "d", "e", "f", "g", "h"]);
-        assert_eq!(tree.levels.len(), 4); // root, 2, 4, 8
+        assert_eq!(tree.levels.len(), 4);
         assert_eq!(tree.levels[0].len(), 1);
+        assert_eq!(tree.levels[1].len(), 2);
+        assert_eq!(tree.levels[2].len(), 4);
         assert_eq!(tree.levels[3].len(), 8);
     }
 
     #[test]
-    fn odd_leaf_count_duplicates_last() {
+    fn odd_leaf_count_duplicates_last() -> anyhow::Result<()> {
         // 3 leaves → [a, b, c, c_dup] at leaf level
         let tree = MerkleTree::build(&["a", "b", "c"]);
         assert_eq!(tree.levels.len(), 3);
         // Leaf level has 4 entries (3 + 1 duplicate)
         assert_eq!(tree.levels[2].len(), 4);
         assert_eq!(tree.levels[2][2], tree.levels[2][3], "last leaf must be duplicated");
-        assert_eq!(*tree.get_root_hash().unwrap(), h(ROOT_ABC));
+        assert_eq!(*tree.get_root_hash().context("missing root")?, h(ROOT_ABC)?);
+        Ok(())
     }
 
     #[test]
-    fn five_leaves_structure() {
+    fn five_leaves_duplicate_at_each_odd_level() {
         let tree = MerkleTree::build(&["a", "b", "c", "d", "e"]);
         // 5 leaves → 6 (dup) → 3 pairs → 4 (dup) → 2 → 1
         assert_eq!(tree.levels.len(), 4);
@@ -459,170 +455,167 @@ mod tests {
     }
 
     #[test]
-    fn deterministic_builds() {
+    fn same_input_produces_identical_root() {
         let t1 = MerkleTree::build(&["x", "y", "z"]);
         let t2 = MerkleTree::build(&["x", "y", "z"]);
         assert_eq!(t1.get_root_hash(), t2.get_root_hash());
     }
 
-    // ── Proof generation ────────────────────────────────────────────────
-
     #[test]
-    fn proof_present_leaf() {
+    fn generate_proof_returns_correct_leaf_hash() -> anyhow::Result<()> {
         let tree = MerkleTree::build(&["a", "b", "c", "d"]);
         let leaf = hash_leaf(b"c");
-        let proof = tree.generate_proof(&leaf);
-        assert!(proof.is_some());
-        let proof = proof.unwrap();
-        assert_eq!(proof.leaf, h(LEAF_C));
+        let proof = tree.generate_proof(&leaf).context("proof not found")?;
+        assert_eq!(proof.leaf, h(LEAF_C)?);
+        Ok(())
     }
 
     #[test]
-    fn proof_absent_leaf() {
+    fn generate_proof_returns_none_for_missing_leaf() {
         let tree = MerkleTree::build(&["a", "b"]);
         let missing = hash_leaf(b"z");
         assert!(tree.generate_proof(&missing).is_none());
     }
 
     #[test]
-    fn proof_on_empty_tree() {
+    fn generate_proof_returns_none_on_empty_tree() {
         let tree = MerkleTree::build::<&[u8]>(&[]);
         let leaf = hash_leaf(b"a");
         assert!(tree.generate_proof(&leaf).is_none());
     }
 
-    // ── Proof verification ──────────────────────────────────────────────
-
     #[test]
-    fn proof_roundtrip_all_leaves() {
+    fn every_leaf_proof_verifies_against_root() -> anyhow::Result<()> {
         let items = &["a", "b", "c", "d"];
         let tree = MerkleTree::build(items);
-        let root = tree.get_root_hash().unwrap();
+        let root = tree.get_root_hash().context("missing root")?;
 
         for item in items {
             let leaf = hash_leaf(item.as_bytes());
-            let proof = tree.generate_proof(&leaf).unwrap();
+            let proof = tree.generate_proof(&leaf).context("proof not found")?;
             assert_eq!(proof.leaf, leaf);
             assert!(proof.verify(root), "proof failed for leaf '{item}'");
         }
+        Ok(())
     }
 
     #[test]
-    fn proof_compute_root_matches_tree_root() {
+    fn compute_root_from_proof_matches_tree_root() -> anyhow::Result<()> {
         let tree = MerkleTree::build(&["a", "b", "c", "d"]);
-        let root = tree.get_root_hash().unwrap();
+        let root = tree.get_root_hash().context("missing root")?;
         let leaf = hash_leaf(b"a");
-        let proof = tree.generate_proof(&leaf).unwrap();
+        let proof = tree.generate_proof(&leaf).context("proof not found")?;
         assert_eq!(proof.compute_root(), *root);
+        Ok(())
     }
 
     #[test]
-    fn tampered_step_fails_verification() {
+    fn tampered_sibling_hash_invalidates_proof() -> anyhow::Result<()> {
         let tree = MerkleTree::build(&["a", "b", "c", "d"]);
-        let root = tree.get_root_hash().unwrap();
+        let root = tree.get_root_hash().context("missing root")?;
         let leaf = hash_leaf(b"a");
-        let mut proof = tree.generate_proof(&leaf).unwrap();
+        let mut proof = tree.generate_proof(&leaf).context("proof not found")?;
         proof.steps[0].hash = hash(b"tampered");
         assert!(!proof.verify(root));
+        Ok(())
     }
 
     #[test]
-    fn tampered_leaf_fails_verification() {
+    fn tampered_leaf_hash_invalidates_proof() -> anyhow::Result<()> {
         let tree = MerkleTree::build(&["a", "b", "c", "d"]);
-        let root = tree.get_root_hash().unwrap();
+        let root = tree.get_root_hash().context("missing root")?;
         let leaf = hash_leaf(b"a");
-        let mut proof = tree.generate_proof(&leaf).unwrap();
+        let mut proof = tree.generate_proof(&leaf).context("proof not found")?;
         proof.leaf = hash_leaf(b"TAMPERED");
         assert!(!proof.verify(root));
+        Ok(())
     }
 
     #[test]
-    fn wrong_root_fails_verification() {
+    fn proof_from_one_tree_fails_against_different_tree_root() -> anyhow::Result<()> {
         let tree1 = MerkleTree::build(&["a", "b"]);
         let tree2 = MerkleTree::build(&["x", "y"]);
         let leaf = hash_leaf(b"a");
-        let proof = tree1.generate_proof(&leaf).unwrap();
-        assert!(!proof.verify(tree2.get_root_hash().unwrap()));
+        let proof = tree1.generate_proof(&leaf).context("proof not found")?;
+        assert!(!proof.verify(tree2.get_root_hash().context("missing root")?));
+        Ok(())
     }
 
     #[test]
-    fn flipped_direction_fails_verification() {
+    fn flipped_sibling_direction_invalidates_proof() -> anyhow::Result<()> {
         let tree = MerkleTree::build(&["a", "b", "c", "d"]);
-        let root = tree.get_root_hash().unwrap();
+        let root = tree.get_root_hash().context("missing root")?;
         let leaf = hash_leaf(b"a");
-        let mut proof = tree.generate_proof(&leaf).unwrap();
+        let mut proof = tree.generate_proof(&leaf).context("proof not found")?;
         // Flip the direction of the first step
         proof.steps[0].direction = match proof.steps[0].direction {
             Direction::Left => Direction::Right,
             Direction::Right => Direction::Left,
         };
         assert!(!proof.verify(root));
+        Ok(())
     }
 
-    // ── Single-element tree edge case ───────────────────────────────────
-
     #[test]
-    fn single_leaf_proof_and_verify() {
+    fn single_leaf_proof_has_no_steps_and_verifies() -> anyhow::Result<()> {
         let tree = MerkleTree::build(&["only"]);
-        let root = tree.get_root_hash().unwrap();
+        let root = tree.get_root_hash().context("missing root")?;
         let leaf = hash_leaf(b"only");
-        let proof = tree.generate_proof(&leaf).unwrap();
+        let proof = tree.generate_proof(&leaf).context("proof not found")?;
         assert!(proof.steps.is_empty(), "single-leaf proof needs no steps");
         assert!(proof.verify(root));
         assert_eq!(proof.compute_root(), *root);
+        Ok(())
     }
 
-    // ── Odd-leaf duplication ────────────────────────────────────────────
-
     #[test]
-    fn proof_for_duplicated_odd_leaf() {
+    fn odd_leaf_duplication_does_not_break_proof() -> anyhow::Result<()> {
         // In a 3-leaf tree [a, b, c], "c" is duplicated to make [a, b, c, c].
         // Proof for "c" should still verify correctly.
         let tree = MerkleTree::build(&["a", "b", "c"]);
-        let root = tree.get_root_hash().unwrap();
+        let root = tree.get_root_hash().context("missing root")?;
         let leaf_c = hash_leaf(b"c");
-        let proof = tree.generate_proof(&leaf_c).unwrap();
+        let proof = tree.generate_proof(&leaf_c).context("proof not found")?;
         assert!(proof.verify(root));
+        Ok(())
     }
 
-    // ── Large tree ──────────────────────────────────────────────────────
-
     #[test]
-    fn large_tree_proof_has_logarithmic_steps() {
-        let n = 1000;
+    fn ten_thousand_leaves_proof_depth_is_log2_n() -> anyhow::Result<()> {
+        let n = 10000;
         let leaves: Vec<String> = (0..n).map(|i| format!("leaf_{i}")).collect();
         let refs: Vec<&str> = leaves.iter().map(|s| s.as_str()).collect();
         let tree = MerkleTree::build(&refs);
-        let root = tree.get_root_hash().unwrap();
+        let root = tree.get_root_hash().context("missing root")?;
 
         let target = hash_leaf(b"leaf_500");
-        let proof = tree.generate_proof(&target).unwrap();
+        let proof = tree.generate_proof(&target).context("proof not found")?;
 
         // Proof steps should be ⌈log₂(n)⌉ = 10 for n=1000
         let expected_depth = (n as f64).log2().ceil() as usize;
         assert_eq!(proof.steps.len(), expected_depth);
         assert!(proof.verify(root));
+        Ok(())
     }
 
     #[test]
-    fn large_tree_all_original_leaves_verify() {
+    fn all_128_leaves_verify_in_power_of_two_tree() -> anyhow::Result<()> {
         let n = 128; // exact power of two — no duplication
         let leaves: Vec<String> = (0..n).map(|i| format!("item_{i}")).collect();
         let refs: Vec<&str> = leaves.iter().map(|s| s.as_str()).collect();
         let tree = MerkleTree::build(&refs);
-        let root = tree.get_root_hash().unwrap();
+        let root = tree.get_root_hash().context("missing root")?;
 
         for leaf_data in &leaves {
             let leaf_hash = hash_leaf(leaf_data.as_bytes());
-            let proof = tree.generate_proof(&leaf_hash).unwrap();
+            let proof = tree.generate_proof(&leaf_hash).context("proof not found")?;
             assert!(proof.verify(root), "failed for {leaf_data}");
         }
+        Ok(())
     }
 
-    // ── Hash type ───────────────────────────────────────────────────────
-
     #[test]
-    fn hash_display_is_64_hex_chars() {
+    fn display_formats_as_64_lowercase_hex_chars() {
         let h = hash(b"test");
         let s = h.to_string();
         assert_eq!(s.len(), 64);
@@ -630,7 +623,7 @@ mod tests {
     }
 
     #[test]
-    fn hash_debug_is_short() {
+    fn debug_formats_as_truncated_hex_with_ellipsis() {
         let h = hash(b"test");
         let dbg = format!("{h:?}");
         assert!(dbg.starts_with("Hash("));
@@ -640,14 +633,14 @@ mod tests {
     }
 
     #[test]
-    fn hash_from_bytes_roundtrip() {
+    fn hash_survives_bytes_roundtrip() {
         let original = hash(b"hello");
         let reconstructed = Hash::from(*original.as_bytes());
         assert_eq!(original, reconstructed);
     }
 
     #[test]
-    fn hash_as_ref_slice() {
+    fn as_ref_returns_32_byte_slice() {
         let h = hash(b"data");
         let slice: &[u8] = h.as_ref();
         assert_eq!(slice.len(), 32);
@@ -655,7 +648,7 @@ mod tests {
     }
 
     #[test]
-    fn hash_known_value() {
+    fn sha256_of_hello_matches_known_digest() {
         // SHA-256("hello") is a well-known value
         let h = hash(b"hello");
         assert_eq!(
@@ -665,12 +658,12 @@ mod tests {
     }
 
     #[test]
-    fn domain_separation_leaf_vs_internal() {
+    fn leaf_and_internal_hashes_differ_due_to_domain_prefix() {
         // hash_leaf and hash_pair must produce different results even if the
         // raw byte content happens to be the same length, because they use
         // different domain prefixes (0x00 vs 0x01).
         let data = hash(b"x");
-        let as_leaf = hash_leaf(data.as_bytes());
+        let as_leaf = hash_leaf(&data.as_bytes().repeat(2));
         let as_pair = hash_pair(&data, &data);
         assert_ne!(as_leaf, as_pair);
     }

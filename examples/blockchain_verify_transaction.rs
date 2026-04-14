@@ -9,8 +9,6 @@
 
 use merkle_tree::{MerkleTree, Proof};
 
-// ── Domain types ─────────────────────────────────────────────────────────
-
 /// A simplified blockchain transaction.
 struct Transaction {
     from: &'static str,
@@ -96,8 +94,6 @@ impl LightNode {
     }
 }
 
-// ── Main ─────────────────────────────────────────────────────────────────
-
 fn main() {
     // Build two blocks with different transactions.
     let block_a = Block::new(
@@ -123,7 +119,6 @@ fn main() {
     };
     let light_node = LightNode::from_full_node(&full_node);
 
-    // ── Scenario 1: Successful membership verification ───────────────
     // A client wants to confirm that the 3rd transaction (index 2) in
     // block-1 was really included. The full node provides a proof; the
     // light node verifies it against the stored Merkle root.
@@ -149,7 +144,6 @@ fn main() {
         (tx_count as f64).log2(),
     );
 
-    // ── Scenario 2: Tamper detection ─────────────────────────────────
     // An attacker modifies a proof step. The Merkle root recomputed from
     // the tampered proof will not match the block's stored root, so
     // verification fails.
@@ -164,7 +158,6 @@ fn main() {
     assert!(!tampered_verified);
     println!();
 
-    // ── Scenario 3: Cross-block rejection ────────────────────────────
     // A proof generated for block-2 cannot verify against block-1's root.
     // Each block has its own Merkle tree, so proofs are scoped to the
     // block they were generated from.
