@@ -10,6 +10,12 @@
 use merkle_tree::{MerkleTree, Proof};
 
 /// A simplified blockchain transaction.
+///
+/// The `nonce` here is a **per-sender sequence number** (as in Ethereum's
+/// account-based model) that prevents replay attacks and orders transactions
+/// from the same sender.  This is distinct from the **block-level nonce**
+/// used in Proof-of-Work mining (e.g. Bitcoin), which lives in the block
+/// header and is iterated by miners to meet the difficulty target.
 struct Transaction {
     from: String,
     to: String,
