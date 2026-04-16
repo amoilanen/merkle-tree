@@ -11,8 +11,8 @@ use merkle_tree::{MerkleTree, Proof};
 
 /// A simplified blockchain transaction.
 struct Transaction {
-    from: &'static str,
-    to: &'static str,
+    from: String,
+    to: String,
     value: u64,
     nonce: u64,
 }
@@ -39,13 +39,14 @@ impl Transaction {
 /// A block on the full node: contains the complete transaction list and its
 /// Merkle tree.
 struct Block {
-    id: &'static str,
+    id: String,
     transactions: Vec<Transaction>,
     tree: MerkleTree,
 }
 
 impl Block {
-    fn new(id: &'static str, transactions: Vec<Transaction>) -> Self {
+    fn new(id: impl Into<String>, transactions: Vec<Transaction>) -> Self {
+        let id = id.into();
         let leaves: Vec<Vec<u8>> = transactions.iter().map(|tx| tx.to_bytes()).collect();
         let tree = MerkleTree::build(&leaves);
         Self { id, transactions, tree }
@@ -66,13 +67,23 @@ impl FullNode {
     }
 }
 
-/// A light node stores only block IDs and Merkle roots — no full
-/// transaction lists. This is the core of SPV: the light node can verify
-/// any transaction's inclusion using only a compact proof received from a
-/// full node, without trusting the full node with anything beyond the proof
-/// data itself.
+/// The minimal per-block metadata a light client needs: the block
+/// identifier and the Merkle root of its transaction tree.
+///
+/// In a real blockchain (e.g. Bitcoin, Ethereum) a block header carries
+/// additional fields (previous-block hash, timestamp, nonce, …); here we
+/// keep only what is required for SPV-style verification.
+struct BlockHeader {
+    id: String,
+    merkle_root: merkle_tree::Hash,
+}
+
+/// A light node stores only block headers — no full transaction lists.
+/// This is the core of SPV: the light node can verify any transaction's
+/// inclusion using only a compact proof received from a full node, without
+/// trusting the full node with anything beyond the proof data itself.
 struct LightNode {
-    headers: Vec<(&'static str, merkle_tree::Hash)>,
+    headers: Vec<BlockHeader>,
 }
 
 impl LightNode {
@@ -80,7 +91,10 @@ impl LightNode {
         let headers = full
             .blocks
             .iter()
-            .map(|b| (b.id, *b.tree.get_root_hash().expect("non-empty block")))
+            .map(|b| BlockHeader {
+                id: b.id.clone(),
+                merkle_root: *b.tree.get_root_hash().expect("non-empty block"),
+            })
             .collect();
         Self { headers }
     }
@@ -89,8 +103,8 @@ impl LightNode {
     fn verify(&self, block_id: &str, proof: &Proof) -> bool {
         self.headers
             .iter()
-            .find(|(id, _)| *id == block_id)
-            .is_some_and(|(_, root)| proof.verify(root))
+            .find(|h| h.id == block_id)
+            .is_some_and(|h| proof.verify(&h.merkle_root))
     }
 }
 
@@ -99,18 +113,18 @@ fn main() {
     let block_a = Block::new(
         "block-1",
         vec![
-            Transaction { from: "0xAlice", to: "0xBob",   value: 50, nonce: 1 },
-            Transaction { from: "0xBob",   to: "0xCarol", value: 30, nonce: 1 },
-            Transaction { from: "0xCarol", to: "0xDave",  value: 10, nonce: 1 },
-            Transaction { from: "0xDave",  to: "0xAlice", value:  5, nonce: 1 },
-            Transaction { from: "0xAlice", to: "0xDave",  value: 20, nonce: 2 },
+            Transaction { from: "0xAlice".into(), to: "0xBob".into(),   value: 50, nonce: 1 },
+            Transaction { from: "0xBob".into(),   to: "0xCarol".into(), value: 30, nonce: 1 },
+            Transaction { from: "0xCarol".into(), to: "0xDave".into(),  value: 10, nonce: 1 },
+            Transaction { from: "0xDave".into(),  to: "0xAlice".into(), value:  5, nonce: 1 },
+            Transaction { from: "0xAlice".into(), to: "0xDave".into(),  value: 20, nonce: 2 },
         ],
     );
     let block_b = Block::new(
         "block-2",
         vec![
-            Transaction { from: "0xEve",  to: "0xAlice", value: 100, nonce: 1 },
-            Transaction { from: "0xAlice", to: "0xBob",   value:  75, nonce: 3 },
+            Transaction { from: "0xEve".into(),   to: "0xAlice".into(), value: 100, nonce: 1 },
+            Transaction { from: "0xAlice".into(), to: "0xBob".into(),   value:  75, nonce: 3 },
         ],
     );
 
