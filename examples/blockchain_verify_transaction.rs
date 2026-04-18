@@ -7,6 +7,7 @@
 //!
 //! Run with: `cargo run --example verify_transaction`
 
+use anyhow::{Context, Result};
 use merkle_tree::{MerkleTree, Proof};
 
 /// A simplified blockchain transaction.
@@ -93,16 +94,22 @@ struct LightNode {
 }
 
 impl LightNode {
-    fn from_full_node(full: &FullNode) -> Self {
+    fn from_full_node(full: &FullNode) -> Result<Self> {
         let headers = full
             .blocks
             .iter()
-            .map(|b| BlockHeader {
-                id: b.id.clone(),
-                merkle_root: *b.tree.get_root_hash().expect("non-empty block"),
+            .map(|b| {
+                let merkle_root = *b
+                    .tree
+                    .get_root_hash()
+                    .with_context(|| format!("block {} has no transactions", b.id))?;
+                Ok(BlockHeader {
+                    id: b.id.clone(),
+                    merkle_root,
+                })
             })
-            .collect();
-        Self { headers }
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Self { headers })
     }
 
     /// Verify a transaction proof against the stored root for `block_id`.
@@ -114,7 +121,7 @@ impl LightNode {
     }
 }
 
-fn main() {
+fn main() -> Result<()> {
     // Build two blocks with different transactions.
     let block_a = Block::new(
         "block-1",
@@ -137,7 +144,7 @@ fn main() {
     let full_node = FullNode {
         blocks: vec![block_a, block_b],
     };
-    let light_node = LightNode::from_full_node(&full_node);
+    let light_node = LightNode::from_full_node(&full_node)?;
 
     // A client wants to confirm that the 3rd transaction (index 2) in
     // block-1 was really included. The full node provides a proof; the
@@ -147,7 +154,7 @@ fn main() {
 
     let proof = full_node
         .proof_for("block-1", 2)
-        .expect("transaction exists in block");
+        .context("transaction at index 2 not found in block-1")?;
 
     let verified = light_node.verify("block-1", &proof);
     println!("Transaction in block-1 verified: {verified}");
@@ -186,7 +193,7 @@ fn main() {
 
     let block_b_proof = full_node
         .proof_for("block-2", 0)
-        .expect("transaction exists in block-2");
+        .context("transaction at index 0 not found in block-2")?;
 
     let cross_verified = light_node.verify("block-1", &block_b_proof);
     println!("Block-2 proof verified against block-1: {cross_verified}");
@@ -199,4 +206,5 @@ fn main() {
     println!();
 
     println!("All scenarios passed.");
+    Ok(())
 }

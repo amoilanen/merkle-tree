@@ -15,6 +15,7 @@
 //!
 //! Run with: `cargo run --example database_sync`
 
+use anyhow::{Context, Result};
 use merkle_tree::MerkleTree;
 
 /// A key-value record stored in a replica.
@@ -57,33 +58,53 @@ impl Replica {
         Self { name, records, tree }
     }
 
-    fn root(&self) -> merkle_tree::Hash {
-        *self.tree.get_root_hash().expect("non-empty replica")
+    fn root(&self) -> Result<merkle_tree::Hash> {
+        self.tree
+            .get_root_hash()
+            .copied()
+            .context("replica has no data")
     }
-}
 
-/// Compare two replicas and return the indices where their leaf hashes differ.
-/// In a real system this would happen over the network, exchanging only hashes
-/// at each tree level to narrow down the differences.
-fn find_divergent_keys(a: &Replica, b: &Replica) -> Vec<usize> {
-    assert_eq!(
-        a.records.len(),
-        b.records.len(),
-        "replicas must have the same key count for this example"
-    );
+    /// Quick check: do two replicas have identical data?
+    /// This is the first step in anti-entropy — if roots match, the replicas
+    /// are fully in sync and no further work is needed.
+    fn is_in_sync_with(&self, other: &Replica) -> Result<bool> {
+        Ok(self.root()? == other.root()?)
+    }
 
-    let mut divergent = Vec::new();
-    for i in 0..a.records.len() {
-        let hash_a = a.tree.get_leaf_hash(i).expect("valid index");
-        let hash_b = b.tree.get_leaf_hash(i).expect("valid index");
-        if hash_a != hash_b {
+    /// Walk the leaf level to find which record indices differ between two
+    /// replicas.  In a real system this would happen over the network,
+    /// exchanging only hashes at each tree level to narrow down differences.
+    fn find_divergent_keys(&self, other: &Replica) -> Result<Vec<usize>> {
+        let common = self.records.len().min(other.records.len());
+
+        let mut divergent = Vec::new();
+        for i in 0..common {
+            let hash_a = self.tree.get_leaf_hash(i).context("invalid leaf index")?;
+            let hash_b = other.tree.get_leaf_hash(i).context("invalid leaf index")?;
+            if hash_a != hash_b {
+                divergent.push(i);
+            }
+        }
+        // Records beyond the common range exist only on one side — all divergent.
+        for i in common..self.records.len().max(other.records.len()) {
             divergent.push(i);
         }
+        Ok(divergent)
     }
-    divergent
+
+    /// Repair this replica by copying the given records from `source`,
+    /// then rebuilding the Merkle tree to reflect the updated data.
+    fn repair_from(&mut self, source: &Replica, indices: &[usize]) {
+        for &idx in indices {
+            self.records[idx] = source.records[idx].clone();
+        }
+        let leaves: Vec<Vec<u8>> = self.records.iter().map(|r| r.to_bytes()).collect();
+        self.tree = MerkleTree::build(&leaves);
+    }
 }
 
-fn main() {
+fn main() -> Result<()> {
     // --- Build two replicas with identical data -----------------------------
 
     let shared_data = vec![
@@ -97,40 +118,42 @@ fn main() {
         Record::new("user:1008", r#"{"name":"Heidi","email":"heidi@example.com"}"#),
     ];
 
-    let replica_a = Replica::new("DC-East", shared_data.clone());
+    let mut replica_a = Replica::new("DC-East", shared_data.clone());
     let replica_b = Replica::new("DC-West", shared_data.clone());
+
+    // --- Scenario 1: Replicas are in sync -----------------------------------
 
     println!("=== Scenario 1: Replicas in sync ===\n");
 
-    println!("  {} root: {}", replica_a.name, replica_a.root());
-    println!("  {} root: {}", replica_b.name, replica_b.root());
+    println!("  {} root: {}", replica_a.name, replica_a.root()?);
+    println!("  {} root: {}", replica_b.name, replica_b.root()?);
 
-    let roots_match = replica_a.root() == replica_b.root();
-    println!("\n  Roots match: {roots_match}");
+    let in_sync = replica_a.is_in_sync_with(&replica_b)?;
+    println!("\n  Roots match: {in_sync}");
     println!("  → No data transfer needed.\n");
-    assert!(roots_match);
+    assert!(in_sync);
 
-    // --- Simulate drift: some records diverge on replica B ------------------
+    // --- Scenario 2: Detect divergence after writes -------------------------
 
     println!("=== Scenario 2: Detect divergence after writes ===\n");
 
     // Simulate replica B receiving writes that replica A missed (e.g. due
     // to a network partition or delayed replication).
-    let mut drifted_data = shared_data.clone();
+    let mut drifted_data = shared_data;
     drifted_data[2] = Record::new("user:1003", r#"{"name":"Carol","email":"carol@newdomain.com"}"#);
     drifted_data[6] = Record::new("user:1007", r#"{"name":"Grace","email":"grace.h@example.com","verified":true}"#);
 
     let replica_b_drifted = Replica::new("DC-West", drifted_data);
 
-    println!("  {} root: {}", replica_a.name, replica_a.root());
-    println!("  {} root: {}", replica_b_drifted.name, replica_b_drifted.root());
+    println!("  {} root: {}", replica_a.name, replica_a.root()?);
+    println!("  {} root: {}", replica_b_drifted.name, replica_b_drifted.root()?);
 
-    let roots_match = replica_a.root() == replica_b_drifted.root();
-    println!("\n  Roots match: {roots_match}");
+    let in_sync = replica_a.is_in_sync_with(&replica_b_drifted)?;
+    println!("\n  Roots match: {in_sync}");
     println!("  → Divergence detected! Walking the tree to find differing keys...\n");
-    assert!(!roots_match);
+    assert!(!in_sync);
 
-    let divergent = find_divergent_keys(&replica_a, &replica_b_drifted);
+    let divergent = replica_a.find_divergent_keys(&replica_b_drifted)?;
 
     println!("  Found {} divergent key(s) out of {} total:", divergent.len(), replica_a.records.len());
     for &idx in &divergent {
@@ -150,47 +173,22 @@ fn main() {
         replica_a.records.len()
     );
 
-    // --- Scenario 3: After repair, roots match again -------------------------
+    // --- Scenario 3: After repair, replicas are back in sync ----------------
 
     println!("=== Scenario 3: After repair, replicas are back in sync ===\n");
 
-    // "Repair" replica A by applying the writes from B
-    let mut repaired_data = shared_data;
-    for &idx in &divergent {
-        repaired_data[idx] = replica_b_drifted.records[idx].clone();
-    }
-    let replica_a_repaired = Replica::new("DC-East", repaired_data);
+    // "Repair" replica A by applying the writes from B.
+    replica_a.repair_from(&replica_b_drifted, &divergent);
 
-    println!("  {} root: {}", replica_a_repaired.name, replica_a_repaired.root());
-    println!("  {} root: {}", replica_b_drifted.name, replica_b_drifted.root());
+    println!("  {} root: {}", replica_a.name, replica_a.root()?);
+    println!("  {} root: {}", replica_b_drifted.name, replica_b_drifted.root()?);
 
-    let roots_match = replica_a_repaired.root() == replica_b_drifted.root();
-    println!("\n  Roots match: {roots_match}");
+    let in_sync = replica_a.is_in_sync_with(&replica_b_drifted)?;
+    println!("\n  Roots match: {in_sync}");
     println!("  → Replicas are synchronised.\n");
-    assert!(roots_match);
-
-    // --- Scenario 4: Verify individual record inclusion ----------------------
-
-    println!("=== Scenario 4: Verify a specific record belongs to a replica ===\n");
-
-    let idx = 4; // user:1005
-    let leaf_hash = replica_a_repaired
-        .tree
-        .get_leaf_hash(idx)
-        .expect("valid index");
-    let proof = replica_a_repaired
-        .tree
-        .generate_proof(leaf_hash)
-        .expect("leaf exists");
-    let verified = proof.verify(&replica_a_repaired.root());
-
-    println!(
-        "  Record '{}' inclusion verified: {verified}  (proof: {} steps for {} records)\n",
-        replica_a_repaired.records[idx].key,
-        proof.steps.len(),
-        replica_a_repaired.records.len(),
-    );
-    assert!(verified);
+    assert!(in_sync);
 
     println!("All scenarios passed.");
+
+    Ok(())
 }

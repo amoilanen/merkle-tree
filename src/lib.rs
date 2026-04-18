@@ -139,12 +139,15 @@ pub fn hash(data: &[u8]) -> Hash {
 
 /// Domain-separated leaf hash: `SHA-256(0x00 || data)`.
 ///
+/// Use this to hash raw data exactly as [`MerkleTree::build`] does, e.g. to
+/// verify that downloaded content matches a proof's leaf hash.
+///
 /// The `0x00` prefix prevents second-preimage attacks where an attacker
 /// crafts leaf data that collides with an internal node hash.
 ///
 /// Reference: *Certificate Transparency* (RFC 6962, §2.1) uses domain
 /// separation for exactly this reason.
-fn hash_leaf(data: &[u8]) -> Hash {
+pub fn hash_leaf(data: &[u8]) -> Hash {
     let mut hasher = Sha256::new();
     hasher.update([0x00]);
     hasher.update(data);
