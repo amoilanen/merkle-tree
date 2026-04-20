@@ -7,11 +7,11 @@ verification.
 
 - **SHA-256 hashing** with domain separation (leaf vs. internal node) to prevent
   second-preimage attacks (per RFC 6962 §2.1)
-- **O(log n) inclusion proofs** — verify membership with only `log₂(n)` sibling
+- **O(log n) inclusion proofs** - verify membership with only `log₂(n)` sibling
   hashes instead of the full dataset
-- **Tamper-evident** — any change to a leaf invalidates the root hash
-- **Zero-copy `Hash` type** — 32-byte stack-allocated newtype with `Copy` semantics
-- **Generic input** — accepts any `AsRef<[u8]>` (`&str`, `String`, `Vec<u8>`, etc.)
+- **Tamper-evident** - any change to a leaf invalidates the root hash
+- **Zero-copy `Hash` type** - 32-byte stack-allocated newtype with `Copy` semantics
+- **Generic input** - accepts any `AsRef<[u8]>` (`&str`, `String`, `Vec<u8>`, etc.)
 
 ## Usage
 
@@ -40,11 +40,34 @@ assert!(!proof.verify(other_tree.root().unwrap()));
 cargo run --example verify_transaction
 ```
 
+## Disclaimer
+
+This implementation is intended for **demonstration and educational purposes**. While it
+follows sound cryptographic practices (domain-separated hashing per RFC 6962), it has
+several limitations that make it unsuitable for production use:
+
+- **Odd-leaf duplication vulnerability** - the Bitcoin-style last-node duplication strategy
+  is susceptible to [CVE-2012-2459](https://bitcointalk.org/?topic=102395), where two
+  different leaf sets can produce the same Merkle root.
+- **Non-constant-time hash comparison** - `Hash` equality uses derived `PartialEq`, which
+  may leak timing information in security-sensitive contexts.
+- **O(n) proof lookup** - proof generation scans the leaf level linearly instead of
+  accepting a leaf index directly.
+- **No incremental updates** - the tree must be fully rebuilt to add or remove leaves.
+- **No serialization** - `Hash`, `Proof`, and `MerkleTree` lack `serde` support for
+  network transmission or persistence.
+- **Full materialization** - all intermediate levels are stored in memory (~64n bytes for
+  n leaves).
+
+For production use, consider established crates such as
+[`rs_merkle`](https://crates.io/crates/rs_merkle) or
+[`merkle-tree-rs`](https://crates.io/crates/merkle-tree-rs).
+
 ## References
 
 - Ralph C. Merkle, *"A Digital Signature Based on a Conventional Encryption
   Function"*, CRYPTO '87
-- US Patent 4,309,569 — *"Method of providing digital signatures"* (1982)
-- Satoshi Nakamoto, *"Bitcoin: A Peer-to-Peer Electronic Cash System"*, §7 —
+- US Patent 4,309,569 - *"Method of providing digital signatures"* (1982)
+- Satoshi Nakamoto, *"Bitcoin: A Peer-to-Peer Electronic Cash System"*, §7 -
   Reclaiming Disk Space
-- RFC 6962 — *"Certificate Transparency"*, §2.1 — Merkle Tree hash domain separation
+- RFC 6962 - *"Certificate Transparency"*, §2.1 - Merkle Tree hash domain separation
