@@ -110,12 +110,22 @@ impl LightNode {
         Ok(Self { headers })
     }
 
-    /// Verify a transaction proof against the stored root for `block_id`.
-    fn verify(&self, block_id: &str, proof: &Proof) -> bool {
-        self.headers
-            .iter()
-            .find(|h| h.id == block_id)
-            .is_some_and(|h| proof.verify(&h.merkle_root))
+    /// Verify that `tx_data` is an authentic transaction included in `block_id`.
+    ///
+    /// Two checks are needed:
+    /// 1. `hash_leaf(tx_data) == proof.leaf` — the transaction bytes match the
+    ///    hash claimed by the proof.
+    /// 2. `proof.verify(&merkle_root)` — the leaf hash chains up through
+    ///    sibling hashes to the trusted Merkle root.
+    ///
+    /// Without the first check, a malicious full node could supply a valid
+    /// proof for a *different* transaction and the light node would accept it.
+    fn verify(&self, block_id: &str, tx_data: &[u8], proof: &Proof) -> bool {
+        merkle_tree::hash_leaf(tx_data) == proof.leaf
+            && self.headers
+                .iter()
+                .find(|h| h.id == block_id)
+                .is_some_and(|h| proof.verify(&h.merkle_root))
     }
 }
 
@@ -154,7 +164,9 @@ fn main() -> Result<()> {
         .proof_for("block-1", 2)
         .context("transaction at index 2 not found in block-1")?;
 
-    let verified = light_node.verify("block-1", &proof);
+    // The light node must know the transaction it wants to verify.
+    let tx_data = Transaction { from: "0xCarol".into(), to: "0xDave".into(), value: 10 }.to_bytes();
+    let verified = light_node.verify("block-1", &tx_data, &proof);
     println!("Transaction in block-1 verified: {verified}");
     assert!(verified);
 
@@ -178,7 +190,7 @@ fn main() -> Result<()> {
     let mut tampered_proof = proof.clone();
     tampered_proof.steps[0].hash = merkle_tree::hash(b"tampered-data");
 
-    let tampered_verified = light_node.verify("block-1", &tampered_proof);
+    let tampered_verified = light_node.verify("block-1", &tx_data, &tampered_proof);
     println!("Tampered proof verified: {tampered_verified}");
     assert!(!tampered_verified);
     println!();
@@ -193,12 +205,13 @@ fn main() -> Result<()> {
         .proof_for("block-2", 0)
         .context("transaction at index 0 not found in block-2")?;
 
-    let cross_verified = light_node.verify("block-1", &block_b_proof);
+    let block_b_tx_data = Transaction { from: "0xEve".into(), to: "0xAlice".into(), value: 100 }.to_bytes();
+    let cross_verified = light_node.verify("block-1", &block_b_tx_data, &block_b_proof);
     println!("Block-2 proof verified against block-1: {cross_verified}");
     assert!(!cross_verified);
 
     // But the same proof succeeds against its own block.
-    let own_block_verified = light_node.verify("block-2", &block_b_proof);
+    let own_block_verified = light_node.verify("block-2", &block_b_tx_data, &block_b_proof);
     println!("Block-2 proof verified against block-2: {own_block_verified}");
     assert!(own_block_verified);
     println!();

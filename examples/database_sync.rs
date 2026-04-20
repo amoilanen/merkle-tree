@@ -73,8 +73,15 @@ impl Replica {
     }
 
     /// Walk the leaf level to find which record indices differ between two
-    /// replicas.  In a real system this would happen over the network,
-    /// exchanging only hashes at each tree level to narrow down differences.
+    /// replicas.
+    ///
+    /// NOTE: For simplicity this compares every leaf hash, making it O(n).
+    /// A production implementation (e.g. Cassandra's anti-entropy) would
+    /// instead walk the tree **level by level**, starting at the root's
+    /// children and recursing only into subtrees whose hashes differ. That
+    /// approach narrows down to the divergent leaves in O(k log n) hash
+    /// comparisons (where k is the number of differing keys), which is
+    /// critical when n is in the millions.
     fn find_divergent_keys(&self, other: &Replica) -> Result<Vec<usize>> {
         let common = self.records.len().min(other.records.len());
 
