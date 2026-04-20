@@ -10,26 +10,26 @@
 use anyhow::{Context, Result};
 use merkle_tree::{MerkleTree, Proof};
 
-/// A simplified blockchain transaction.
+/// A simplified Bitcoin-like transaction.
 ///
-/// The `nonce` here is a **per-sender sequence number** (as in Ethereum's
-/// account-based model) that prevents replay attacks and orders transactions
-/// from the same sender.  This is distinct from the **block-level nonce**
-/// used in Proof-of-Work mining (e.g. Bitcoin), which lives in the block
-/// header and is iterated by miners to meet the difficulty target.
+/// In Bitcoin's UTXO model, each transaction consumes previous unspent
+/// outputs (inputs) and creates new outputs.  There is no per-sender
+/// nonce: replay protection is inherent because once a UTXO is spent it
+/// ceases to exist.  Here we use a simplified representation with `from`,
+/// `to`, and `value` fields to keep the focus on Merkle tree verification
+/// rather than full UTXO mechanics.
 struct Transaction {
     from: String,
     to: String,
     value: u64,
-    nonce: u64,
 }
 
 impl Transaction {
     /// Deterministic binary serialisation used as Merkle tree leaf data.
     ///
-    /// A real implementation would use RLP, SSZ, or another canonical encoding;
+    /// A real implementation would use a canonical binary encoding;
     /// here we concatenate fields with a delimiter that cannot appear in the
-    /// address/nonce representation to keep things simple.
+    /// address representation to keep things simple.
     fn to_bytes(&self) -> Vec<u8> {
         let mut buf = Vec::new();
         buf.extend_from_slice(self.from.as_bytes());
@@ -37,8 +37,6 @@ impl Transaction {
         buf.extend_from_slice(self.to.as_bytes());
         buf.push(b'|');
         buf.extend_from_slice(self.value.to_le_bytes().as_slice());
-        buf.push(b'|');
-        buf.extend_from_slice(self.nonce.to_le_bytes().as_slice());
         buf
     }
 }
@@ -126,18 +124,18 @@ fn main() -> Result<()> {
     let block_a = Block::new(
         "block-1",
         vec![
-            Transaction { from: "0xAlice".into(), to: "0xBob".into(),   value: 50, nonce: 1 },
-            Transaction { from: "0xBob".into(),   to: "0xCarol".into(), value: 30, nonce: 1 },
-            Transaction { from: "0xCarol".into(), to: "0xDave".into(),  value: 10, nonce: 1 },
-            Transaction { from: "0xDave".into(),  to: "0xAlice".into(), value:  5, nonce: 1 },
-            Transaction { from: "0xAlice".into(), to: "0xDave".into(),  value: 20, nonce: 2 },
+            Transaction { from: "0xAlice".into(), to: "0xBob".into(),   value: 50 },
+            Transaction { from: "0xBob".into(),   to: "0xCarol".into(), value: 30 },
+            Transaction { from: "0xCarol".into(), to: "0xDave".into(),  value: 10 },
+            Transaction { from: "0xDave".into(),  to: "0xAlice".into(), value:  5 },
+            Transaction { from: "0xAlice".into(), to: "0xDave".into(),  value: 20 },
         ],
     );
     let block_b = Block::new(
         "block-2",
         vec![
-            Transaction { from: "0xEve".into(),   to: "0xAlice".into(), value: 100, nonce: 1 },
-            Transaction { from: "0xAlice".into(), to: "0xBob".into(),   value:  75, nonce: 3 },
+            Transaction { from: "0xEve".into(),   to: "0xAlice".into(), value: 100 },
+            Transaction { from: "0xAlice".into(), to: "0xBob".into(),   value:  75 },
         ],
     );
 
